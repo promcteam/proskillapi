@@ -28,14 +28,12 @@ package com.sucy.skill.dynamic;
 
 import com.sucy.skill.SkillAPI;
 import com.sucy.skill.api.CastData;
-import com.sucy.skill.api.PlayerDataConsumer;
 import com.sucy.skill.api.Settings;
 import com.sucy.skill.api.particle.ParticleHelper;
 import com.sucy.skill.api.player.PlayerData;
 import com.sucy.skill.api.player.PlayerSkill;
 import com.sucy.skill.log.Logger;
 import mc.promcteam.engine.mccore.config.parse.DataSection;
-import mc.promcteam.engine.mccore.util.MobManager;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -43,6 +41,8 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.*;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * A component for dynamic skills which takes care of one effect
@@ -258,50 +258,37 @@ public abstract class EffectComponent {
     }
 
     protected String filter(LivingEntity caster, LivingEntity target, String text) {
-        // Grab values
-        int i = text.indexOf('{');
-        if (i < 0) {
-            return filterSpecialChars(text);
-        }
-
-        int j = text.indexOf('}', i);
-        if (j < 0) {
-            return filterSpecialChars(text);
-        }
-
-        StringBuilder       builder = new StringBuilder();
         CastData data    = DynamicSkill.getCastData(caster);
+        String   pattern = "\\{[^{}]+}";
+        Pattern  pat     = Pattern.compile(pattern);
 
-        int k = 0;
-        while (i >= 0 && j > i) {
-            String key = text.substring(i + 1, j);
-            if (data.contains(key)) {
-                String obj = data.get(key);
-                builder.append(text, k, i);
-                builder.append(obj);
+        Map<String, String> snipped = new LinkedHashMap<>();
 
-                k = j + 1;
-            } else if (key.equals("player")) {
-                builder.append(text, k, i);
-                builder.append(caster.getName());
-
-                k = j + 1;
-            } else if (key.equals("target")) {
-                builder.append(text, k, i);
-                builder.append(target.getName());
-
-                k = j + 1;
-            } else if (key.equals("targetUUID")) {
-                builder.append(text, k, i);
-                builder.append(target.getUniqueId());
-
-                k = j + 1;
+        Matcher match = pat.matcher(text);
+        while (match.find()) {
+            String key = match.group().substring(1, match.group().length() - 1);
+            if (data.contains(key)) text = text.replace(match.group(), data.get(key));
+            else if (key.equals("player")) text = text.replace(match.group(), caster.getName());
+            else if (key.equals("target")) text = text.replace(match.group(), target.getName());
+            else if (key.equals("targetUUID")) text = text.replace(match.group(), target.getUniqueId().toString());
+            else {
+                // Replace the key with a unique identifier, so we don't loop infinitely
+                UUID uuid = UUID.randomUUID();
+                snipped.put(uuid.toString(), key);
+                text = text.replace(match.group(), uuid.toString());
             }
-            i = text.indexOf('{', j);
-            j = text.indexOf('}', i);
+
+            match = pat.matcher(text);
         }
-        builder.append(text.substring(k));
-        return filterSpecialChars(builder.toString());
+
+        List<Map.Entry<String, String>> list = new ArrayList<>(snipped.entrySet());
+        // Iterate in reverse order. FILO
+        for (int i = list.size() - 1; i >= 0; i--) {
+            Map.Entry<String, String> entry = list.get(i);
+            text = text.replace(entry.getKey(), "{" + entry.getValue() + "}");
+        }
+
+        return filterSpecialChars(text);
     }
 
     public boolean execute(LivingEntity caster, int level, List<LivingEntity> targets) {
